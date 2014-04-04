@@ -1,4 +1,164 @@
-bitmail-api
-===========
+*BitMail API v1.0-preliminary*
 
-Documentation on the BitMail API.
+
+Introduction
+============
+This is a preliminary document.
+
+
+The BitMail API is a Web API.  Clients call the API by making HTTPS POST requests, and getting JSON responses back from the server.
+
+
+
+Usage
+=====
+
+This section acts as a quick guide, stepping through a typical usage of the BitMail API.  It does not go into detail on each of the API methods.  You should check the Methods section for details on each call.
+
+
+### 1) Get Token
+
+A client identifies itself to the server with a **Token**.  All API calls, except `new_token`, require a **Token** parameter.  It is a kind of Session ID that allows the server to remember who you are between API calls.
+
+Calling `new_token` returns a 32-byte string, which the application stores and uses in all further API calls.  
+
+**IMPORTANT:** **Tokens** are private, sensitive information and must be protected by any application using the BitMail API.  Leaking a `Token` will give an attacker access to a user's email.  See the *Token Security* section for more information.
+
+
+### 2) Authenticate
+
+To view the mail for a **Bitcoin Address**, we must first authenticate ourselves.  This is performed with a call to `authorize_address`, which accepts a signature generated from a **Bitcoin Address** and a special message.  If the signature is valid, the server will then authorize your **Token** to view mail associated with the **Bitcoin Address**.
+
+
+### 3) List Addresses
+
+Both the application and the user will likely want to know what **Bitcoin Addresses** they are currently authorized to view the inboxes of.  The `list_addresses` method will do just that.
+
+
+### 4) List Mail
+
+After authenticating with the server, we'll want to list all the recent mail we've received.  Calling `list_mail` will list all the mail we are authorized to view, from most recent to oldest.  **TODO**: This part of the API is under development and will eventually include parameters to select only the most recent X mail messages.
+
+Typically this method would be called to show an Inbox to the user.
+
+
+### 5) Fetch Mail
+
+The `list_mail` call only returns basic information about each mail.  Notably, the message body is not returned.  For that, we'll use `fetch_mail`.
+
+`list_mail` will give us a **Mail ID**, which we can pass to `fetch_mail`.  `fetch_mail` then returns all the details of the mesage, including the message body.
+
+Typically this method would be called when the user wants to read a particular message.
+
+It is important to note that the message body returned by this method is the raw SMTP message.  It will likely contain lots of SMTP headers.  It is up to the application to correctly parse the message body, and format any HTML content it may contain.
+
+**IMPORTANT:** Parsing HTML content is inherently error-prone and is likely to result in vulnerabilities in your application if not implemented with the utmost attention and care.  Use existing, vetted libraries if available.  Alternatively, your application may choose to only display plain-text messages, and strip HTML-only messages of HTML tags.
+
+
+
+Methods
+=======
+
+
+General
+-------
+
+All methods are called by making an HTTPS POST request, with the necessary parameters, to [https://bitmail.bitcoin-mining.com/mail/api/METHOD] (https://bitmail.bitcoin-mining.com/mail/api/METHOD).  METHOD is replaced with the name of the API method (lowercase).  Responses will always be JSON encoded, unless specified otherwise.
+
+If an error occured during an API call, the JSON response will be object containing one field, `error`, a string.  `error` describes the error that occured.  If no error occured, the regular JSON response will be returned.
+
+
+new_token
+---------
+
+#### Parameters
+ * None
+
+#### Response
+ * `token: 32 byte string, hexencoded`
+
+This method returns a random, 32-byte string, which can be used as a **Token** in all other API calls.  Please see the **Token Security** section.
+
+
+authorize_address
+-----------------
+
+#### Parameters
+ * `token: 32 byte string, hexencoded`
+ * `timestamp: 64-bit Unix timestamp, encoded as a decimal integer.`
+ * `signature: Signature string`
+
+#### Response
+ * `success: Boolean that is true if the API call succeeded.`
+
+This method authorizes the specified **Token** to view mail that has been sent to the **Bitcoin Address** associated with `signature`.  The message that should be signed is the hexencoded SHA256 digest of the folllowing:
+
+    bitmail-auth[TOKEN][TIMESTAMP]
+
+Where [TOKEN] is the hexencoded **Token**, and [TIMESTAMP] is the hexencoded `timestamp` parameter.  [TIMESTAMP] should always be 16 characters long (0 padded on the left).  The timestamp must be recent (within 24 hours).  Example:
+
+    msg = sha256 ("bitmail-auth5aef950cfaf3514f2f8778bd041be2e0d1727998f19a942dcd1721d6ebe4b67400000000533EF96E").hexdigest ()
+    => "fbbc58828957550fb0028c5f1161e7e4ebf95a6e662828dc03b53f73aaf30aad"
+
+**TODO:** The only kind of signature currently accepted are the ones generated by Bitcoin-QT.  The API will be extended to support signature formats from the existing, popular clients.
+
+**TODO:** This API method will be extended with a Bitcoin Address parameter.  For now, it is derived from the Signature, but that can lead to authorizing random addresses on bad sigs (not a security vulnerability, just a usability issue).
+
+
+list_addresses
+--------------
+
+#### Parameters
+ * `token: 32 byte string, hexencoded`
+
+#### Response
+ * `addresses: List of strings; bitcoin addresses.`
+
+This method returns the list of **Bitcoin Addresses** that `token` is authorized to view mail sent to.  Any addresses authorized by a call to `authorize_address` should show up here.
+
+
+list_mail
+---------
+
+#### Parameters
+ * `token: 32 byte string, hexencoded`
+
+#### Response
+ * `mail: List of mail.`
+
+Lists basic information about all mail, which `token` is authorized to view.  The messages are listed from most recent to oldest.  `mail` will be a list of objects, each containing:
+
+ * `id: 64-bit unique integer identifying this message`
+ * `recipient: String, TO field of the message`
+ * `date_received: 64-bit integer, unix timestamp`
+ * `sender: String, FROM field of the message`
+ * `subject: String, Subject line of the message`
+
+
+fetch_mail
+----------
+
+#### Parameters
+ * `token: 32 byte string, hexencoded`
+ * `id: 64-bit integer`
+
+#### Response
+ * `id: 64-bit unique integer identifying this message`
+ * `recipient: String, TO field of the message`
+ * `date_received: 64-bit integer, unix timestamp`
+ * `sender: String, FROM field of the message`
+ * `subject: String, Subject line of the message`
+ * `body: String, body of the message`
+
+The body returned by this API call is the raw SMTP message.  Any application using this API call will therefore need to parse the SMTP headers, and handle any content contained in the message.  For example, mail is likely to contain HTML content, which must be processed in some way.  Simple clients can strip all HTML and return plaintext to the user.
+
+**IMPORTANT:** Parsing HTML content is inherently error-prone and is likely to result in vulnerabilities in your application if not implemented with the utmost attention and care.  Use existing, vetted libraries if available.  Alternatively, your application may choose to only display plain-text messages, and strip HTML-only messages of HTML tags.
+
+
+
+Token Security
+==============
+
+A stolen **Token** allows an attacker to impersonate the victim, allowing them to read/write/delete the victim's mail.  It is therefore imperitive that any application written using the BitMail API protect its **Token**.  It should be treated as a sacred artifact, akin to a user's password.
+
+**Tokens** are intended to be 32 byte random binary strings.  This makes guessing them improbable.  The `new_token` API is the recommended way to generate new tokens.  The BitMail API Server has a robust random number generator, whereas client applications are not likely to have a good, or properly implemented RNG.  However, applications are free to choose their own tokens if desired.
